@@ -1,5 +1,8 @@
 // Интерактивный дайджест-бот для Telegram на Cloudflare Workers.
-// Хранит последний выпуск дайджеста в KV и отдаёт разделы по inline-кнопкам.
+// Выпуск читается из digest.json в этом же GitHub-репозитории.
+// Крон раз в 15 минут проверяет новый выпуск и присылает меню.
+
+const RAW_URL = "https://raw.githubusercontent.com/Howgad/Digest/main/digest.json";
 
 const SECTION_TITLES = {
   glavnoe: "🔥 Главное",
@@ -36,7 +39,6 @@ async function tg(env, method, payload) {
   return res.json();
 }
 
-// Разбивает длинный текст на куски <= limit, стараясь резать по абзацам.
 function splitText(text, limit = 4000) {
   if (text.length <= limit) return [text];
   const chunks = [];
@@ -63,16 +65,23 @@ async function sendHtml(env, chatId, text, extra = {}) {
   }
 }
 
-async function getDigest(env) {
-  const raw = await env.DIGEST.get("latest");
-  return raw ? JSON.parse(raw) : null;
+async function getDigest() {
+  try {
+    const r = await fetch(`${RAW_URL}?t=${Date.now()}`, {
+      cf: { cacheTtl: 0, cacheEverything: false },
+    });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (e) {
+    return null;
+  }
 }
 
 async function sendMenu(env, chatId) {
-  const d = await getDigest(env);
+  const d = await getDigest();
   const header = d
     ? `📰 <b>Дайджест арбитража — ${d.date}</b>\nВыбери раздел:`
-    : "Пока нет сохранённых выпусков. Меню заработает после ближайшего утреннего дайджеста.";
+    : "Пока нет выпусков — загляни после утреннего дайджеста.";
   await tg(env, "sendMessage", {
     chat_id: chatId,
     text: header,
@@ -82,11 +91,11 @@ async function sendMenu(env, chatId) {
 }
 
 async function sendSection(env, chatId, key) {
-  const d = await getDigest(env);
+  const d = await getDigest();
   if (!d) {
     await tg(env, "sendMessage", {
       chat_id: chatId,
-      text: "Пока нет сохранённых выпусков — загляни после утреннего запуска.",
+      text: "Пока нет выпусков — загляни после утреннего запуска.",
     });
     return;
   }
@@ -106,7 +115,6 @@ async function sendSection(env, chatId, key) {
 }
 
 async function handleWebhook(request, env) {
-  // Telegram присылает секрет, заданный при setWebhook — отсекаем чужие запросы.
   if (
     request.headers.get("x-telegram-bot-api-secret-token") !==
     env.WEBHOOK_SECRET
@@ -136,34 +144,26 @@ async function handleWebhook(request, env) {
   return new Response("ok");
 }
 
-async function handleUpdate(request, env) {
-  // Сюда ежедневная задача заливает свежий выпуск.
-  if (request.headers.get("x-update-secret") !== env.UPDATE_SECRET) {
-    return new Response("forbidden", { status: 403 });
-  }
-  const body = await request.json();
-  // Ожидаемый формат: { date: "10.07.2026", sections: { glavnoe: "<b>..</b>", platezhki: "..", platformy: "..", industriya: ".." } }
-  if (!body?.date || typeof body.sections !== "object") {
-    return new Response("bad request", { status: 400 });
-  }
-  await env.DIGEST.put("latest", JSON.stringify(body));
-  // Уведомляем владельца и показываем меню.
-  await tg(env, "sendMessage", {
-    chat_id: env.CHAT_ID,
-    text: `📰 <b>Дайджест арбитража — ${body.date}</b>\nВыпуск готов, выбери раздел:`,
-    parse_mode: "HTML",
-    reply_markup: menuKeyboard(),
-  });
-  return new Response("stored");
-}
-
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (request.method === "POST" && url.pathname === "/webhook")
       return handleWebhook(request, env);
-    if (request.method === "POST" && url.pathname === "/update")
-      return handleUpdate(request, env);
     return new Response("OK");
+  },
+
+  // Крон: если в digest.json новая дата — прислать меню владельцу.
+  async scheduled(event, env, ctx) {
+    const d = await getDigest();
+    if (!d?.date) return;
+    const last = await env.DIGEST.get("notified_date");
+    if (d.date === last) return;
+    await env.DIGEST.put("notified_date", d.date);
+    await tg(env, "sendMessage", {
+      chat_id: env.CHAT_ID,
+      text: `📰 <b>Дайджест арбитража — ${d.date}</b>\nСвежий выпуск готов, выбери раздел:`,
+      parse_mode: "HTML",
+      reply_markup: menuKeyboard(),
+    });
   },
 };
