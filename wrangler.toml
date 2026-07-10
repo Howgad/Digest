@@ -2,11 +2,13 @@ name = "arbitrage-digest-bot"
 main = "index.js"
 compatibility_date = "2026-01-01"
 
-# Привязки берутся из этого файла при каждом деплое — ручные правки биндингов в дашборде перезапишутся.
-
 [vars]
 CHAT_ID = "783355102"
 
 kv_namespaces = [
   { binding = "DIGEST", id = "89d32d48bb784fa9b89702f84129c2f7" }
 ]
+
+# Каждые 15 минут воркер проверяет, не появился ли новый digest.json
+[triggers]
+crons = ["*/15 * * * *"]
