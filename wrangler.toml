@@ -5,7 +5,6 @@ compatibility_date = "2026-01-01"
 [vars]
 CHAT_ID = "783355102"
 
-# ID возьми в Cloudflare: Storage & Databases → KV → namespace DIGEST → ID
 kv_namespaces = [
-  { binding = "DIGEST", id = "ВСТАВЬ_ID_НЕЙМСПЕЙСА" }
+  { binding = "DIGEST", id = "89d32d48bb784fa9b89702f84129c2f7" }
 ]
